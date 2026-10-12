@@ -1,0 +1,18 @@
+\begin{table}[htbp]
+\centering
+\scriptsize
+\caption{Example~\ref{ex3h}: temporal error at the valuation date $\tau=T$ ($N_x=400$; same-grid reference with $N_t=12800$), $\max_{0.2K\le S\le2.5K}|u-u_h|/K$ with observed orders in parentheses. European put: uniform steps, uniform steps with a Rannacher start, and the graded mesh $\tau_n=T(1-(1-n/N_t)^2)$.  American put: uniform steps and the two-sided graded mesh.}
+\label{tab:ex1_time}
+\begin{tabular}{rlllll}
+\toprule
+$N_t$ & Eur.\ uniform & Eur.\ Rannacher & Eur.\ graded & Am.\ uniform & Am.\ two-sided \\
+\midrule
+50 & $1.02\times10^{-4}$ (--) & $1.18\times10^{-4}$ (--) & $7.09\times10^{-6}$ (--) & $2.29\times10^{-4}$ (--) & $2.68\times10^{-5}$ (--) \\
+100 & $4.37\times10^{-5}$ (1.23) & $4.77\times10^{-5}$ (1.31) & $1.77\times10^{-6}$ (2.00) & $1.33\times10^{-4}$ (0.78) & $6.29\times10^{-6}$ (2.09) \\
+200 & $1.86\times10^{-5}$ (1.23) & $1.96\times10^{-5}$ (1.28) & $4.41\times10^{-7}$ (2.00) & $7.70\times10^{-5}$ (0.79) & $1.61\times10^{-6}$ (1.96) \\
+400 & $7.92\times10^{-6}$ (1.23) & $8.17\times10^{-6}$ (1.26) & $1.10\times10^{-7}$ (2.00) & $5.48\times10^{-5}$ (0.49) & $3.55\times10^{-7}$ (2.18) \\
+800 & $3.38\times10^{-6}$ (1.23) & $3.44\times10^{-6}$ (1.25) & $2.74\times10^{-8}$ (2.01) & $1.97\times10^{-5}$ (1.48) & $8.92\times10^{-8}$ (1.99) \\
+1600 & $1.45\times10^{-6}$ (1.22) & $1.46\times10^{-6}$ (1.24) & $6.77\times10^{-9}$ (2.02) & $7.72\times10^{-6}$ (1.35) & $2.44\times10^{-8}$ (1.87) \\
+\bottomrule
+\end{tabular}
+\end{table}

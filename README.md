@@ -1,177 +1,55 @@
-# GMFBM MLS/FPM Option Pricing Codes
+# Non-cardinal MLS collocation for GMFBM option pricing
 
-This repository contains the Python codes used to reproduce the numerical examples, temporal convergence study, and stability diagnostics for the paper:
+Code for the paper *A Semismooth Newton-Based Non-Cardinal MLS Collocation Method for Option Pricing and Sensitivity Analysis under Generalized Mixed Fractional Brownian Motion* (D. Damircheli, S.-M.-M. Kazemi).
 
-> **A Semismooth Newton-Based Non-Cardinal MLS Collocation Method for Option Pricing and Sensitivity Analysis under Generalized \emph{Mixed} Fractional Brownian Motion**
+The package implements exactly the discretization analyzed in the paper:
 
-The implementation focuses on option pricing under the generalized mixed fractional Brownian motion (GMFBM) model using a finite-point / moving least-squares (MLS/FPM) meshfree collocation method in log-price space.
+| Paper | Code |
+|---|---|
+| Sec. 3: non-cardinal MLS shape functions, mass matrix `M_h`, derivative matrices `D_{k,h}` with exact derivatives (eq. (mls_derivs)) | `gmfbm_mls/mls.py` |
+| Sec. 2, Prop. (closed form): GMFBM coefficient `a(tau)`, its parameter derivatives, exact European prices, Greeks and parameter sensitivities | `gmfbm_mls/model.py` |
+| Sec. 4: averaged Crank–Nicolson in coefficient form `(M_h - s_n L_{n+1}) U^{n+1} = (M_h + s_n L_n) U^n`, coefficient Dirichlet rows, uniform / graded / two-sided time meshes | `gmfbm_mls/solvers.py: solve_european, time_mesh` |
+| Sec. 5, Alg. 1: American LCP on reconstructed prices `q = M_h U`, Fischer–Burmeister semismooth Newton with Armijo line search | `gmfbm_mls/solvers.py: solve_american_put, fb_semismooth_newton` |
+| Sec. 8: Greeks via chain rule, Theta from the PDE, tangent equations reusing the price LU factors | `gmfbm_mls/solvers.py: greeks, solve_tangent` |
+| Sec. 9: independent reference for the American put (centred FD + Brennan–Schwartz) | `gmfbm_mls/benchmark.py` |
 
-## Repository structure
+Production settings (Sec. 9): degree `m = 3`, weight `(1 - r^2)^5`, support radius `3.5 h`, `N_x` uniform subintervals on `[-6, 6]`, two-sided graded time mesh.  The dissipativity condition (Assumption 13) is checked by `experiments/run_experiments.py dissipativity`. It holds for this configuration and fails for larger supports and for `m = 4`, so re-run it if you change the MLS parameters.
 
-```text
-gmfbm-mls-option-pricing/
-│
-├── README.md
-├── requirements.txt
-├── LICENSE
-├── CITATION.cff
-│
-├── codes/
-│   ├── gmfbm_example1_mls.py
-│   ├── gmfbm_temporal_convergence_fixed_Nx400.py
-│   └── stability_diagnostics_reliable.py
-│
-├── results/
-│   ├── example1/
-│   ├── temporal_convergence/
-│   └── stability_diagnostics/
-│
-├── figures/
-│
-└── docs/
-    ├── index.md
-    └── usage.md
-```
-
-## Code description
-
-### `codes/gmfbm_example1_mls.py`
-
-Main reproducibility script for the first numerical example. It solves the GMFBM option-pricing problem in log-price coordinates using an MLS/FPM derivative reconstruction and Crank--Nicolson time stepping. It includes:
-
-- European put pricing,
-- American put pricing using a projected Crank--Nicolson approximation, with optional PSOR for the LCP,
-- price curve and surface plots,
-- exploratory Crank--Nicolson amplification diagnostics.
-
-Typical run:
+## Install
 
 ```bash
-python codes/gmfbm_example1_mls.py
-```
-
-Expected output folder:
-
-```text
-gmfbm_example1_output/
-```
-
-### `codes/gmfbm_temporal_convergence_fixed_Nx400.py`
-
-Temporal convergence experiment for Example 1 with fixed spatial resolution. The script fixes the spatial grid, varies the number of time steps, and compares the computed solutions against a fine same-grid reference solution. It reports normalized price errors over a financial window.
-
-Typical run:
-
-```bash
-python codes/gmfbm_temporal_convergence_fixed_Nx400.py
-```
-
-Expected output folder:
-
-```text
-temporal_convergence_results/
-```
-
-Expected outputs include:
-
-```text
-ex1_temporal_convergence_fixed_Nx400.csv
-ex1_temporal_convergence_fixed_Nx400.png
-ex1_temporal_convergence_fixed_Nx400.pdf
-```
-
-### `codes/stability_diagnostics_reliable.py`
-
-Stability diagnostic script for the semi-discrete GMFBM log-price operator. It generates a CSV file and a LaTeX table for the reported stability diagnostic.
-
-Typical run:
-
-```bash
-python codes/stability_diagnostics_reliable.py
-```
-
-Expected output folder:
-
-```text
-gmfbm_stability_output/
-```
-
-Expected outputs include:
-
-```text
-stability_diagnostics_reliable.csv
-stability_diagnostics_reliable_table.tex
-```
-
-**Important note.** This diagnostic checks the energy-stable finite-point/SBP realization of the semi-discrete operator. If the exploratory row-wise MLS derivative matrices are used instead, the stability diagnostic should be rerun using the corresponding exact mass matrix and assembled spatial operator.
-
-## Installation
-
-Create and activate a virtual environment:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-Install the required packages:
-
-```bash
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Running all scripts
-
-From the repository root:
+## Reproduce the paper
 
 ```bash
-python codes/gmfbm_example1_mls.py
-python codes/gmfbm_temporal_convergence_fixed_Nx400.py
-python codes/stability_diagnostics_reliable.py
+python experiments/run_experiments.py all     # results/*.json  (about 1-1.5 h on 2 cores)
+python experiments/make_tables.py             # tables/*.tex
+python experiments/make_figures.py            # figures/*.pdf
 ```
 
-## Suggested GitHub Pages setup
+Individual experiments: `dissipativity`, `propagator`, `euro_space`, `euro_time`, `benchmarks`, `american` (needs `benchmarks`), `sensitivity`.
+`python experiments/make_tables.py main_with_markers.tex main.tex` inserts the tables into a manuscript at the `%%TABLE:<name>%%` markers, so the numbers in the paper are always the numbers in `results/`.
 
-This repository includes a `docs/` folder that can be used as the GitHub Pages source.
+## Quick check
 
-After pushing the repository to GitHub:
-
-1. Go to **Settings**.
-2. Open **Pages**.
-3. Under **Build and deployment**, choose **Deploy from a branch**.
-4. Choose the main branch and select `/docs` as the publishing folder.
-5. Save.
-
-Then edit:
-
-```text
-docs/index.md
+```bash
+python -m pytest -q tests
 ```
 
-to describe the paper, method, and code usage.
+## Minimal example
 
-## Suggested citation text for the paper
+```python
+import numpy as np
+from gmfbm_mls.model import EXAMPLE1 as m
+from gmfbm_mls.solvers import Discretization, time_mesh, solve_european, solve_american_put
 
-In the numerical results section, the repository can be cited as:
-
-```latex
-All numerical experiments reported in this section were implemented in Python.
-The source codes for the MLS/FPM option-pricing solver, temporal convergence
-study, and stability diagnostics are available at
-\url{https://github.com/YOUR-GITHUB-USERNAME/gmfbm-mls-option-pricing}.
+d = Discretization(nx=400)                       # m=3, (1-r^2)^5, support 3.5h
+taus = time_mesh(400, m.T, "two_sided")
+x = np.log(np.array([0.75, 1.0, 1.25]))          # x = ln(S/K)
+E = d.eval_matrices(x, kmax=0)[0]                # MLS reconstruction at x
+print(E @ solve_european(m, d, taus, "put", "financial").U, m.european(m.K * np.exp(x), m.T))
+print(E @ solve_american_put(m, d, taus).U)
 ```
-
-A separate code availability statement can be added near the end of the paper:
-
-```latex
-\section*{Code Availability}
-The Python codes used to reproduce the numerical experiments in this paper are
-available at
-\url{https://github.com/YOUR-GITHUB-USERNAME/gmfbm-mls-option-pricing}.
-The repository includes the implementation of the GMFBM MLS/FPM option-pricing
-solver, temporal convergence tests, and stability diagnostic scripts.
-```
-
-## License
-
-This repository is currently distributed under the MIT License. Replace the license if the journal or collaborators require a different one.

@@ -1,8 +1,0 @@
-cff-version: 1.2.0
-message: "If you use this code, please cite the associated paper."
-title: "GMFBM MLS/FPM Option Pricing Codes"
-authors:
-  - family-names: "Damircheli"
-    given-names: "Davood"
-year: 2026
-repository-code: "https://github.com/DavoodDamircheli/gmfbm-mls-option-pricing"

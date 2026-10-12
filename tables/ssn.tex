@@ -1,0 +1,22 @@
+\begin{table}[htbp]
+\centering
+\scriptsize
+\caption{American put: Fischer--Burmeister semismooth Newton diagnostics over all time steps (average and maximum iterations, largest final residual $\|\Phi\|_\infty$, number of Armijo step reductions) and final-step complementarity $\|(M_h\mathbf U-\boldsymbol\eta)\odot(\mathcal A_n\mathbf U-\mathbf b^n)\|_\infty$ and $\min(M_h\mathbf U-\boldsymbol\eta)$ on the interior nodes.  Two-sided graded time mesh.}
+\label{tab:ssn}
+\begin{tabular}{crrrrrrrr}
+\toprule
+Ex. & $N_x$ & $N_t$ & avg.\ it. & max it. & $\|\Phi\|_\infty$ & reductions & compl. & $\min(q-\eta)$ \\
+\midrule
+1 & 100 & 200 & 3.30 & 5 & $9.7\times10^{-11}$ & 0 & $3.8\times10^{-16}$ & $-7.1\times10^{-15}$ \\
+1 & 200 & 400 & 2.98 & 6 & $9.9\times10^{-11}$ & 0 & $2.4\times10^{-15}$ & $-7.1\times10^{-15}$ \\
+1 & 400 & 800 & 2.86 & 6 & $9.6\times10^{-11}$ & 0 & $1.2\times10^{-15}$ & $-1.1\times10^{-14}$ \\
+1 & 800 & 800 & 2.97 & 6 & $1.0\times10^{-10}$ & 0 & $1.5\times10^{-15}$ & $-7.1\times10^{-15}$ \\
+1 & 800 & 1600 & 2.69 & 6 & $9.8\times10^{-11}$ & 0 & $2.0\times10^{-15}$ & $-7.1\times10^{-15}$ \\
+2 & 100 & 200 & 3.49 & 7 & $9.1\times10^{-11}$ & 0 & $2.7\times10^{-14}$ & $-2.8\times10^{-14}$ \\
+2 & 200 & 400 & 3.33 & 6 & $9.8\times10^{-11}$ & 0 & $3.1\times10^{-14}$ & $-1.4\times10^{-14}$ \\
+2 & 400 & 800 & 3.07 & 6 & $9.6\times10^{-11}$ & 0 & $4.8\times10^{-14}$ & $-2.8\times10^{-14}$ \\
+2 & 800 & 800 & 3.33 & 7 & $9.8\times10^{-11}$ & 0 & $4.2\times10^{-14}$ & $-2.8\times10^{-14}$ \\
+2 & 800 & 1600 & 2.94 & 6 & $9.9\times10^{-11}$ & 0 & $5.1\times10^{-14}$ & $-2.8\times10^{-14}$ \\
+\bottomrule
+\end{tabular}
+\end{table}

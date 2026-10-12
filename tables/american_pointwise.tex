@@ -1,0 +1,23 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{American put at $t=0$: reference price (centred finite differences, $12000$ subintervals, $4000$ steps, Brennan--Schwartz) and MLS price on the production grid ($N_x=800$, $N_t=800$). Estimated reference error (Richardson, $\|u_{12000}-u_{6000}\|_\infty/3$): $5.6\times10^{-6}$ (Ex.~\ref{ex3h}) and $1.2\times10^{-5}$ (Ex.~\ref{ex5h}).}
+\label{tab:american_pointwise}
+\begin{tabular}{llrrr}
+\toprule
+ & $S$ & Reference & MLS & Abs.\ error \\
+\midrule
+Ex.~\ref{ex3h} & $0.5K$ & 12.499999 & 12.500000 & $7.05\times10^{-7}$ \\
+ & $0.75K$ & 6.306120 & 6.306997 & $8.77\times10^{-4}$ \\
+ & $K$ & 2.638886 & 2.640020 & $1.13\times10^{-3}$ \\
+ & $1.25K$ & 1.042731 & 1.043445 & $7.14\times10^{-4}$ \\
+ & $1.5K$ & 0.398405 & 0.398608 & $2.04\times10^{-4}$ \\
+\midrule
+Ex.~\ref{ex5h} & $0.5K$ & 49.999997 & 50.000010 & $1.30\times10^{-5}$ \\
+ & $0.75K$ & 27.569807 & 27.572115 & $2.31\times10^{-3}$ \\
+ & $K$ & 15.284727 & 15.287935 & $3.21\times10^{-3}$ \\
+ & $1.25K$ & 8.542590 & 8.545401 & $2.81\times10^{-3}$ \\
+ & $1.5K$ & 4.830803 & 4.832694 & $1.89\times10^{-3}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
