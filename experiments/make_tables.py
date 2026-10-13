@@ -1,220 +1,238 @@
-#!/usr/bin/env python3
-"""Build the LaTeX tables of Section 9 from results/*.json and insert them into a
-manuscript at the markers  %%TABLE:<name>%%  (python make_tables.py main.tex out.tex),
-or write them to tables/<name>.tex (python make_tables.py)."""
-from __future__ import annotations
+"""Write the LaTeX bodies of all tables of Section 9 from results/*.json into ../../tables/."""
+import os
 
-import json
-import sys
-from pathlib import Path
+import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-RES = ROOT / "results"
+from common import ROOT, load, orders
+
+TAB = os.path.join(os.path.dirname(ROOT), "tables")
+os.makedirs(TAB, exist_ok=True)
 
 
-def J(name):
-    return json.loads((RES / f"{name}.json").read_text())
-
-
-def sci(v, d=2):
-    if v is None:
+def sci(x, d=2):
+    if x is None or not np.isfinite(x):
         return "--"
-    m, e = f"{v:.{d}e}".split("e")
-    return rf"${m}\times10^{{{int(e)}}}$"
+    if x == 0:
+        return "$0$"
+    e = int(np.floor(np.log10(abs(x))))
+    m = x / 10 ** e
+    if round(abs(m), d) >= 10:
+        m /= 10
+        e += 1
+    return r"$%.*f\times10^{%d}$" % (d, m, e)
 
 
-def o(v):
-    return "--" if v is None else f"{v:.2f}"
+def od(o):
+    return "--" if o is None else "%.2f" % o
 
 
-def eo(e, ordv):
-    return f"{sci(e)} & {o(ordv)}"
-
-
-def tab(label, caption, colspec, header, rows, size=r"\small"):
-    body = "\n".join(r + r" \\" for r in rows)
-    return (f"\\begin{{table}}[htbp]\n\\centering\n{size}\n\\caption{{{caption}}}\n\\label{{{label}}}\n"
-            f"\\begin{{tabular}}{{{colspec}}}\n\\toprule\n{header} \\\\\n\\midrule\n{body}\n\\bottomrule\n"
-            f"\\end{{tabular}}\n\\end{{table}}")
-
-
-def t_european_pointwise():
-    p = J("euro_space")["pointwise_production"]
-    S = ["0.5K", "0.75K", "K", "1.25K", "1.5K"]
-    rows = [f"${s}$ & {p['put']['exact'][i]:.6f} & {p['put']['mls'][i]:.6f} & {sci(p['put']['abs_err'][i])} & "
-            f"{p['call']['exact'][i]:.6f} & {p['call']['mls'][i]:.6f} & {sci(p['call']['abs_err'][i])}"
-            for i, s in enumerate(S)]
-    return tab("tab:ex1_european_pointwise",
-               r"Example~\ref{ex3h}, European options at $t=0$: exact price (Proposition~\ref{nw:prop:closed_form}) "
-               r"and MLS price on the production grid ($N_x=800$, $N_t=800$, two-sided graded mesh, "
-               r"financial boundary data).",
-               "rrrrrrr", r"$S$ & Put (exact) & Put (MLS) & Abs.\ error & Call (exact) & Call (MLS) & Abs.\ error",
-               rows, size=r"\footnotesize")
-
-
-def t_american_pointwise():
-    a = J("american")
-    S = ["0.5K", "0.75K", "K", "1.25K", "1.5K"]
-    rows = []
-    for ex, lab in (("Example 1", r"Ex.~\ref{ex3h}"), ("Example 2", r"Ex.~\ref{ex5h}")):
-        p = a[ex]["pointwise"]
-        for i, s in enumerate(S):
-            rows.append(f"{lab if i == 0 else ''} & ${s}$ & {p['benchmark'][i]:.6f} & {p['mls'][i]:.6f} & "
-                        f"{sci(p['abs_err'][i])}")
-        if ex == "Example 1":
-            rows.append(r"\midrule")
-    rows = [r for r in rows]
-    body = []
-    for r in rows:
-        body.append(r if r == r"\midrule" else r)
-    cap = (r"American put at $t=0$: reference price (centred finite differences, $12000$ subintervals, "
-           r"$4000$ steps, Brennan--Schwartz) and MLS price on the production grid ($N_x=800$, $N_t=800$). "
-           r"Estimated reference error (Richardson, $\|u_{12000}-u_{6000}\|_\infty/3$): "
-           f"{sci(a['Example 1']['benchmark_uncertainty_over_K'] * 25, 1)} (Ex.~\\ref{{ex3h}}) and "
-           f"{sci(a['Example 2']['benchmark_uncertainty_over_K'] * 100, 1)} (Ex.~\\ref{{ex5h}}).")
-    txt = "\n".join((r if r == r"\midrule" else r + r" \\") for r in body)
-    return (f"\\begin{{table}}[htbp]\n\\centering\n\\small\n\\caption{{{cap}}}\n\\label{{tab:american_pointwise}}\n"
-            f"\\begin{{tabular}}{{llrrr}}\n\\toprule\n & $S$ & Reference & MLS & Abs.\\ error \\\\\n\\midrule\n"
-            f"{txt}\n\\bottomrule\n\\end{{tabular}}\n\\end{{table}}")
-
-
-def t_space():
-    e = J("euro_space")
-    a = J("american")["Example 1"]["space"]
-    rows = []
-    for i, nx in enumerate(e["nx"]):
-        rows.append(f"{nx} & {e['h'][i]:.4f} & {eo(e['put'][i], e['put_order'][i])} & "
-                    f"{eo(e['call'][i], e['call_order'][i])} & {eo(a['err'][i], a['order'][i])}")
-    return tab("tab:ex1_space",
-               r"Example~\ref{ex3h}: spatial convergence at $\tau=T$, $\max_{0.2K\le S\le2.5K}|u-u_h|/K$. "
-               r"European options against the exact price (exact Dirichlet traces); American put against the "
-               r"finite-difference reference.  Time mesh: two-sided graded, $N_t=1600$.",
-               "rrrrrrrr", r"$N_x$ & $h$ & Eur.\ put & order & Eur.\ call & order & Am.\ put & order", rows,
-               size=r"\footnotesize")
-
-
-def t_time():
-    e = J("euro_time")
-    a = J("american")["Example 1"]["time"]
-    rows = []
-    for i, N in enumerate(e["N"]):
-        def c(errs, ords):
-            return f"{sci(errs[i])} ({o(ords[i])})"
-        rows.append(f"{N} & {c(e['uniform'], e['uniform_order'])} & {c(e['uniform_rannacher'], e['uniform_rannacher_order'])} & "
-                    f"{c(e['graded'], e['graded_order'])} & {c(a['uniform'], a['uniform_order'])} & "
-                    f"{c(a['two_sided'], a['two_sided_order'])}")
-    return tab("tab:ex1_time",
-               r"Example~\ref{ex3h}: temporal error at the valuation date $\tau=T$ ($N_x=400$; same-grid reference "
-               r"with $N_t=12800$), $\max_{0.2K\le S\le2.5K}|u-u_h|/K$ with observed orders in parentheses. "
-               r"European put: uniform steps, uniform steps with a Rannacher start, and the graded mesh "
-               r"$\tau_n=T(1-(1-n/N_t)^2)$.  American put: uniform steps and the two-sided graded mesh.",
-               "rlllll", r"$N_t$ & Eur.\ uniform & Eur.\ Rannacher & Eur.\ graded & Am.\ uniform & Am.\ two-sided",
-               rows, size=r"\scriptsize")
-
-
-def t_beta():
-    e = J("euro_time")
-    rows = []
-    for b in e["beta_table"]:
-        rows.append(f"$({b['H'][0]},\\,{b['H'][1]})$ & {b['beta']:.2f} & {1 + b['beta']:.2f} & "
-                    + ", ".join(o(x) for x in b["orders"]))
-    unif = e["uniform_order"][2:]
-    rows.append(f"Example~\\ref{{ex3h}} & {e['beta']:.2f} & {1 + e['beta']:.2f} & " + ", ".join(o(x) for x in unif))
-    return tab("tab:beta",
-               r"Observed valuation-date orders of the averaged Crank--Nicolson scheme with uniform steps "
-               r"against the prediction $1+\beta$ of Theorem~\ref{nw:thm:endpoint}.  Two-component rows: "
-               r"$\alpha=(0.5,0.5)$, $N_x=200$, $N_t=100\to1600$; Example~\ref{ex3h}: $N_x=400$, $N_t=100\to1600$.",
-               "lccl", r"$H$ & $\beta$ & $1+\beta$ & observed pairwise orders", rows)
+def write(name, lines):
+    with open(os.path.join(TAB, name + ".tex"), "w") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 def t_dissipativity():
-    d = J("dissipativity")
-    by = {}
-    for r in d["production"]:
-        by.setdefault(r["nx"], {})[r["example"]] = r
-    rows = []
-    for nx in sorted(by):
-        r1, r2 = by[nx]["Example 1"], by[nx]["Example 2"]
-        rows.append(f"{nx} & {r1['h']:.4f} & ${r1['lam_max']:.5f}$ & ${r2['lam_max']:.5f}$ & {r1['norm_M']:.3f} & "
-                    f"{r1['norm_Minv']:.2f} & {r1['C_D']:.2f}")
-    return tab("tab:dissipativity",
-               r"Assumption~\ref{st:assump:dissipativity} for the assembled non-cardinal MLS operator "
-               r"($m=3$, support radius $3.5h$): $\max_n\lambda_{\max}(S_n^h)$ over all time levels, the mass-matrix "
-               r"bounds of Assumption~\ref{st:assump:mass} and the constant $C_D=h\|M_h^{-1}D_{1,h}\|_{h\to h}$.",
-               "rrrrrrr", r"$N_x$ & $h$ & $\max_n\lambda_{\max}$ (Ex.~1) & $\max_n\lambda_{\max}$ (Ex.~2) & "
-                          r"$\|M_h\|_h$ & $\|M_h^{-1}\|_h$ & $C_D$", rows, size=r"\footnotesize")
+    rows = load("stability_dissipativity")
+    L = [r"\begin{tabular}{rrrrrrrrr}", r"\toprule",
+         r" & \multicolumn{2}{c}{$\max_n\lambda_{\max}$, $A^h=M_h^{-1}L_h$} & \multicolumn{2}{c}{$\max_n\lambda_{\max}$, $R^h=L_hM_h^{-1}$} & & & & \\",
+         r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}",
+         r"$N_x$ & Ex.~1 & Ex.~2 & Ex.~1 & Ex.~2 & $\|M_h\|_h$ & $\|M_h^{-1}\|_h$ & $\kappa_2(M_h)$ & $C_D$ \\", r"\midrule"]
+    for r in rows:
+        L.append("%d & $%.5f$ & $%.5f$ & $%.5f$ & $%.5f$ & %.3f & %.2f & %.2f & %.2f \\\\" % (
+            r["Nx"], r["lamA1"], r["lamA2"], r["lamB1"], r["lamB2"], r["normM"], r["normMinv"], r["kappaM"], r["CD"]))
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_dissipativity", L)
 
 
 def t_propagator():
-    rows = []
-    for r in J("propagator"):
-        rows.append(f"{r['nx']} & {r['nt']} & {r['kmax_over_h']:.3f} & {r['max_norm']:.7f} & {r['max_rho']:.7f} & "
-                    f"{r['Theta']:.3f} & {r['bound']:.3f}")
-    return tab("tab:propagator",
-               r"Example~\ref{ex3h}: fully discrete propagator $P_n=(I-s_nA_{n+1}^h)^{-1}(I+s_nA_n^h)$ on the "
-               r"two-sided graded mesh, maximum over all steps, compared with the bound "
-               r"$1+\Theta\max_n|\rho_n|$ of Theorem~\ref{nw:thm:stability}.",
-               "rrrrrrr", r"$N_x$ & $N_t$ & $\max_nk_n/h$ & $\max_n\|P_n\|_h$ & $\max_n\rho(P_n)$ & $\Theta$ & "
-                          r"bound", rows, size=r"\footnotesize")
+    rows = load("stability_propagator")
+    L = [r"\begin{tabular}{rrrrrrr}", r"\toprule",
+         r"$N_x$ & $N_t$ & $\max_nk_n/h$ & $\max_n\|P_n\|_h$ & $\max_n\operatorname{spr}(P_n)$ & $\Xi$ & bound \\", r"\midrule"]
+    for r in rows:
+        L.append("%d & %d & %.3f & %.7f & %.7f & %.3f & %.3f \\\\" % (
+            r["Nx"], r["Nt"], r["kappa"], r["Pnorm"], r["Prho"], r["Xi"], r["bound"]))
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_propagator", L)
+
+
+def t_nodes():
+    rows = load("stability_nodes")
+    by = {}
+    for r in rows:
+        by.setdefault(r["Nx"], {})[r["nodes"]] = r
+    L = [r"\begin{tabular}{rrrrrrr}", r"\toprule",
+         r" & \multicolumn{1}{c}{uniform} & \multicolumn{2}{c}{clustered} & \multicolumn{3}{c}{randomly perturbed (3 draws)} \\",
+         r"\cmidrule(lr){2-2}\cmidrule(lr){3-4}\cmidrule(lr){5-7}",
+         r"$N_x$ & error & error & $\lambda_{\max}(A^h)$ & error (range) & $\lambda_{\max}(A^h)$ (max) & $\max\operatorname{Re}\operatorname{spec}(A^h)$ \\",
+         r"\midrule"]
+    for Nx in sorted(by):
+        d = by[Nx]
+        jit = [d["jitter%d" % s] for s in range(3)]
+        je = [j["err"] for j in jit]
+        jl = [j["lamA"] for j in jit]
+        jr = [j["maxRe"] for j in jit]
+        lam_c = d["sinh"]["lamA"]
+        L.append("%d & %s & %s & %s & %s--%s & %s & %s \\\\" % (
+            Nx, sci(d["uniform"]["err"]), sci(d["sinh"]["err"]),
+            "--" if not np.isfinite(lam_c) else "$%.4f$" % lam_c,
+            sci(min(je)), sci(max(je)),
+            "--" if not np.all(np.isfinite(jl)) else "$%.2f$" % max(jl),
+            "--" if not np.all(np.isfinite(jr)) else "$%.4f$" % max(jr)))
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_nodes", L)
+
+
+def t_eur_pointwise():
+    d = load("european_pointwise")
+    pts = [r"$0.5K$", r"$0.75K$", r"$K$", r"$1.25K$", r"$1.5K$"]
+    L = [r"\begin{tabular}{rrrrrrr}", r"\toprule",
+         r"$S$ & Put (exact) & Put (MLS) & Abs.\ error & Call (exact) & Call (MLS) & Abs.\ error \\", r"\midrule"]
+    for i, p in enumerate(pts):
+        pe, pm = d["put"]["exact"][i], d["put"]["mls"][i]
+        ce, cm = d["call"]["exact"][i], d["call"]["mls"][i]
+        L.append("%s & %.6f & %.6f & %s & %.6f & %.6f & %s \\\\" % (p, pe, pm, sci(abs(pe - pm)), ce, cm, sci(abs(ce - cm))))
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_ex1_european_pointwise", L)
+
+
+def t_space():
+    rows = load("european_spatial")
+    h = [r["h"] for r in rows]
+    inv = [1 / x for x in h]
+    o = {k: orders([r[k] for r in rows], inv) for k in ("put", "call", "am")}
+    L = [r"\begin{tabular}{rrrrrrrr}", r"\toprule",
+         r"$N_x$ & $h$ & Eur.\ put & order & Eur.\ call & order & Am.\ put & order \\", r"\midrule"]
+    for i, r in enumerate(rows):
+        L.append("%d & %.4f & %s & %s & %s & %s & %s & %s \\\\" % (
+            r["Nx"], r["h"], sci(r["put"]), od(o["put"][i]), sci(r["call"]), od(o["call"][i]), sci(r["am"]), od(o["am"][i])))
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_ex1_space", L)
+
+
+def t_time():
+    d = load("european_temporal")
+    Nt = d["Nt"]
+    keys = ("eur_uniform", "eur_rannacher", "eur_graded", "am_uniform", "am_twosided")
+    o = {k: orders(d[k], Nt) for k in keys}
+    L = [r"\begin{tabular}{rlllll}", r"\toprule",
+         r"$N_t$ & Eur.\ uniform & Eur.\ Rannacher & Eur.\ graded & Am.\ uniform & Am.\ two-sided \\", r"\midrule"]
+    for i, n in enumerate(Nt):
+        L.append("%d & " % n + " & ".join("%s (%s)" % (sci(d[k][i]), od(o[k][i])) for k in keys) + r" \\")
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_ex1_time", L)
+
+
+def t_beta():
+    rows = load("european_beta")
+    tm = load("european_temporal")
+    t2 = load("european_T2")
+    L = [r"\begin{tabular}{lccl}", r"\toprule", r"$H$ & $\beta$ & $1+\beta$ & observed pairwise orders \\", r"\midrule"]
+    for r in rows:
+        L.append(r"$(%.1f,\,%s)$ & %.2f & %.2f & %s \\" % (
+            r["H"][0], ("%g" % r["H"][1]), r["beta"], 1 + r["beta"], ", ".join("%.2f" % x for x in r["orders"])))
+    o1 = orders(tm["eur_uniform"], tm["Nt"])[2:]
+    L.append(r"Example~\ref{ex3h} & 0.18 & 1.18 & %s \\" % ", ".join("%.2f" % x for x in o1))
+    o2 = orders(t2["temporal"]["eur_uniform"], t2["temporal"]["Nt"])[1:]
+    L.append(r"Example~\ref{ex3h}, $T=2$ & 0.18 & 1.18 & %s \\" % ", ".join("%.2f" % x for x in o2))
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_beta", L)
+
+
+def t_am_pointwise():
+    d = load("american_pointwise")
+    pts = [r"$0.5K$", r"$0.75K$", r"$K$", r"$1.25K$", r"$1.5K$"]
+    L = [r"\begin{tabular}{llrrr}", r"\toprule", r" & $S$ & Reference & MLS & Abs.\ error \\", r"\midrule"]
+    for j, (ex, lab) in enumerate((("ex1", r"Ex.~\ref{ex3h}"), ("ex2", r"Ex.~\ref{ex5h}"))):
+        if j:
+            L.append(r"\midrule")
+        p = d[ex]["pointwise"]
+        for i, s in enumerate(pts):
+            L.append("%s & %s & %.6f & %.6f & %s \\\\" % (lab if i == 0 else "", s, p["ref"][i], p["mls"][i],
+                                                       sci(abs(p["ref"][i] - p["mls"][i]))))
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_american_pointwise", L)
 
 
 def t_ssn():
-    a = J("american")
-    rows = []
-    for ex, lab in (("Example 1", "1"), ("Example 2", "2")):
-        for r in a[ex]["diagnostics"]:
-            rows.append(f"{lab} & {r['nx']} & {r['nt']} & {r['avg_iterations']:.2f} & {r['max_iterations']} & "
-                        f"{sci(r['max_final_residual'], 1)} & {r['linesearch_reductions']} & "
-                        f"{sci(r['complementarity'], 1)} & {sci(min(r['min_q_minus_phi'], 0.0), 1) if r['min_q_minus_phi'] < 0 else '0'}")
-    return tab("tab:ssn",
-               r"American put: Fischer--Burmeister semismooth Newton diagnostics over all time steps (average and "
-               r"maximum iterations, largest final residual $\|\Phi\|_\infty$, number of Armijo step reductions) and "
-               r"final-step complementarity $\|(M_h\mathbf U-\boldsymbol\eta)\odot(\mathcal A_n\mathbf U-\mathbf b^n)\|_\infty$ "
-               r"and $\min(M_h\mathbf U-\boldsymbol\eta)$ on the interior nodes.  Two-sided graded time mesh.",
-               "crrrrrrrr", r"Ex. & $N_x$ & $N_t$ & avg.\ it. & max it. & $\|\Phi\|_\infty$ & reductions & "
-                            r"compl. & $\min(q-\eta)$", rows, size=r"\scriptsize")
+    rows = load("american_ssn")
+    L = [r"\begin{tabular}{crrrrrrrrr}", r"\toprule",
+         r"Ex. & $N_x$ & $N_t$ & avg.\ it. & max it. & $\|\Phi\|_\infty$ & red. & compl. & $\min(q-\eta)$ & $\min(\mathcal A\mathbf U-\mathbf b)$ \\", r"\midrule"]
+    for r in rows:
+        L.append("%s & %d & %d & %.2f & %d & %s & %d & %s & %s & %s \\\\" % (
+            r["ex"], r["Nx"], r["Nt"], r["avg"], r["max"], sci(r["res"], 1), r["red"], sci(r["compl"], 1), sci(r["min_gap"], 1), sci(r["min_dual"], 1)))
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_ssn", L)
 
 
 def t_greeks():
-    e = J("euro_space")
-    rows = []
-    for i, nx in enumerate(e["nx"]):
-        rows.append(f"{nx} & " + " & ".join(eo(e[k][i], e[k + '_order'][i]) for k in ("Delta", "Gamma", "Speed", "Theta")))
-    return tab("tab:greeks",
-               r"Example~\ref{ex3h}, European put at $t=0$: maximum error of the MLS Greeks over "
-               r"$0.2K\le S\le2.5K$ against the exact Greeks (two-sided graded mesh, $N_t=1600$).",
-               "rrrrrrrrr", r"$N_x$ & $\Delta$ & order & $\Gamma$ & order & Speed & order & $\Theta$ & order", rows,
-               size=r"\scriptsize")
+    rows = load("greeks")
+    Nx = [r["Nx"] for r in rows]
+    o = {k: orders([r[k] for r in rows], Nx) for k in ("delta", "gamma", "speed", "theta")}
+    L = [r"\begin{tabular}{rrrrrrrrr}", r"\toprule",
+         r"$N_x$ & $\Delta$ & order & $\Gamma$ & order & Speed & order & $\Theta$ & order \\", r"\midrule"]
+    for i, r in enumerate(rows):
+        L.append("%d & " % r["Nx"] + " & ".join("%s & %s" % (sci(r[k]), od(o[k][i])) for k in ("delta", "gamma", "speed", "theta")) + r" \\")
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_greeks", L)
 
 
 def t_sens():
-    s = J("sensitivity")
-    ps, ph = s["params"]["sigma"], s["params"]["H1"]
-    rows = []
-    for i in range(len(ps["err"])):
-        rows.append(f"{[100, 200, 400, 800][i]} & {eo(ps['err'][i], ps['order'][i])} & {eo(ph['err'][i], ph['order'][i])}")
-    return tab("tab:sensitivity",
-               r"Example~\ref{ex3h}, European put at time to maturity $\tau=T/2$: maximum error over "
-               r"$0.2K\le S\le2.5K$ of the tangent-equation sensitivities $\partial u/\partial\sigma$ and "
-               r"$\partial u/\partial H_2$ against the exact derivatives of Proposition~\ref{nw:prop:closed_form} "
-               r"($N_t=800$, two-sided graded mesh).",
-               "rrrrr", r"$N_x$ & $\partial_\sigma u$ error & order & $\partial_{H_2}u$ error & order", rows)
+    rows = load("sensitivity")
+    Nx = [r["Nx"] for r in rows]
+    o = {k: orders([r[k] for r in rows], Nx) for k in ("sigma", "H2")}
+    L = [r"\begin{tabular}{rrrrr}", r"\toprule",
+         r"$N_x$ & $\partial_\sigma u$ error & order & $\partial_{H_2}u$ error & order \\", r"\midrule"]
+    for i, r in enumerate(rows):
+        L.append("%d & %s & %s & %s & %s \\\\" % (r["Nx"], sci(r["sigma"]), od(o["sigma"][i]), sci(r["H2"]), od(o["H2"][i])))
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_sensitivity", L)
 
 
-TABLES = {"european_pointwise": t_european_pointwise, "american_pointwise": t_american_pointwise,
-          "space": t_space, "time": t_time, "beta": t_beta, "dissipativity": t_dissipativity,
-          "propagator": t_propagator, "ssn": t_ssn, "greeks": t_greeks, "sensitivity": t_sens}
+def t_efficiency():
+    rows = load("efficiency")
+    Nxs = sorted({r["Nx"] for r in rows})
+    meths = ("FD uniform", "MLS uniform", "MLS clustered")
+    L = [r"\begin{tabular}{rrrrrrr}", r"\toprule",
+         r" & \multicolumn{2}{c}{FD, uniform} & \multicolumn{2}{c}{MLS, uniform} & \multicolumn{2}{c}{MLS, clustered} \\",
+         r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}",
+         r"$N_x$ & error & time (s) & error & time (s) & error & time (s) \\", r"\midrule"]
+    for kind, lab in (("european", "European put"), ("american", "American put")):
+        L.append(r"\multicolumn{7}{l}{\emph{%s}} \\" % lab)
+        for Nx in Nxs:
+            cells = []
+            for m in meths:
+                r = [x for x in rows if x["Nx"] == Nx and x["method"] == m and x["kind"] == kind][0]
+                cells.append("%s & %.3f" % (sci(r["err"]), r["time"]))
+            L.append("%d & " % Nx + " & ".join(cells) + r" \\")
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_efficiency", L)
+
+
+def t_hurst():
+    rows = load("hurst")
+    L = [r"\begin{tabular}{lrrrrrrrr}", r"\toprule",
+         r" & \multicolumn{4}{c}{$T=1$} & \multicolumn{4}{c}{$T=0.5$} \\",
+         r"\cmidrule(lr){2-5}\cmidrule(lr){6-9}",
+         r"$H$ & European & American & premium & $S_f^*(0)$ & European & American & premium & $S_f^*(0)$ \\", r"\midrule"]
+    names = []
+    for r in rows:
+        if r["config"] not in names:
+            names.append(r["config"])
+    for nm in names:
+        r1 = [r for r in rows if r["config"] == nm and r["T"] == 1.0][0]
+        r2 = [r for r in rows if r["config"] == nm and r["T"] == 0.5][0]
+        lab = {"BM": r"$(0.5)$ (Black--Scholes)", "Example 1": r"Example~\ref{ex3h}"}.get(nm, "$" + nm + "$")
+        L.append("%s & %.4f & %.4f & %.4f & %.2f & %.4f & %.4f & %.4f & %.2f \\\\" % (
+            lab, r1["eur"], r1["am"], r1["eep"], r1["Sf0"], r2["eur"], r2["am"], r2["eep"], r2["Sf0"]))
+    L += [r"\bottomrule", r"\end{tabular}"]
+    write("tab_hurst", L)
+
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3:
-        src = Path(sys.argv[1]).read_text()
-        for k, f in TABLES.items():
-            src = src.replace(f"%%TABLE:{k}%%", f())
-        Path(sys.argv[2]).write_text(src)
-        print("tables inserted ->", sys.argv[2])
-    else:
-        out = ROOT / "tables"
-        out.mkdir(exist_ok=True)
-        for k, f in TABLES.items():
-            (out / f"{k}.tex").write_text(f() + "\n")
-        print("wrote tables/*.tex")
+    for f in (t_dissipativity, t_propagator, t_nodes, t_eur_pointwise, t_space, t_time, t_beta, t_am_pointwise,
+              t_ssn, t_greeks, t_sens, t_efficiency, t_hurst):
+        try:
+            f()
+            print("ok", f.__name__)
+        except FileNotFoundError as e:
+            print("missing results for", f.__name__, e)

@@ -1,122 +1,102 @@
-"""
-GMFBM pricing model in log-price / forward-time variables (Section 2).
-
-    u_tau = a(tau) (u_xx - u_x) + (r - delta) u_x - r u,     x = ln(S/K), tau = T - t,
-    a(tau) = sigma^2 sum_i H_i alpha_i^2 (T - tau)^(2 H_i - 1).
-
-The European price has the closed form of Proposition 1 (Black--Scholes with total
-variance v(tau) = 2 int_0^tau a = sigma^2 sum_i alpha_i^2 (T^{2H_i} - (T-tau)^{2H_i})).
-It is used as the exact benchmark for every European experiment.
-"""
-from __future__ import annotations
-
-from dataclasses import dataclass, field, replace
+"""GMFBM model: diffusion coefficient, closed-form European prices and Greeks, time meshes."""
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.stats import norm
 
 
-@dataclass(frozen=True)
+@dataclass
 class GMFBM:
-    K: float = 25.0
+    H: tuple
+    alpha: tuple
+    sigma: float
+    r: float
+    K: float
     T: float = 1.0
-    r: float = 0.08
-    delta: float = 0.0
-    sigma: float = 0.35
-    H: tuple = (0.5, 0.59, 0.68, 0.77)
-    alpha: tuple = (0.5, 0.5, 0.5, 0.5)
+    delta: float = 0.0  # dividend yield
+    S_ref: float = None  # reference price S_* (default K)
 
-    def with_(self, **kw) -> "GMFBM":
-        return replace(self, **kw)
+    def __post_init__(self):
+        self.H = np.asarray(self.H, dtype=float)
+        self.alpha = np.asarray(self.alpha, dtype=float)
+        if self.S_ref is None:
+            self.S_ref = self.K
 
-    # -- coefficient and its parameter derivatives --------------------------
-    def a(self, tau: float) -> float:
-        s = max(self.T - tau, 0.0)
-        tot = 0.0
-        for H, al in zip(self.H, self.alpha):
-            e = 2.0 * H - 1.0
-            tot += H * al**2 * (1.0 if abs(e) < 1e-14 else (s**e if s > 0 else 0.0))
-        return self.sigma**2 * tot
+    # a(tau) = sigma^2 sum H_i alpha_i^2 (T - tau)^(2H_i - 1)
+    def a(self, tau):
+        t = np.maximum(self.T - np.asarray(tau, dtype=float), 0.0)
+        t = np.atleast_1d(t)
+        out = np.zeros_like(t)
+        for h, al in zip(self.H, self.alpha):
+            e = 2 * h - 1
+            out += h * al ** 2 * (np.ones_like(t) if e == 0 else t ** e)
+        out *= self.sigma ** 2
+        return out if np.ndim(tau) else float(out[0])
 
-    def a_param(self, tau: float, p: str) -> float:
-        """d a / d p for p in {'sigma', 'H<i>', 'alpha<i>'} (alpha_i independent of H_i)."""
-        s = max(self.T - tau, 0.0)
-        if p == "sigma":
-            return 2.0 * self.a(tau) / self.sigma
-        kind, i = p.rstrip("0123456789"), int(p.lstrip("Halph"))
-        H, al = self.H[i], self.alpha[i]
-        e = 2.0 * H - 1.0
-        if kind == "alpha":
-            return 2.0 * self.sigma**2 * H * al * (1.0 if abs(e) < 1e-14 else (s**e if s > 0 else 0.0))
-        if kind == "H":
-            if s == 0.0:
-                if e <= 0:
-                    raise ValueError("d a/dH_i is singular at tau = T when H_i <= 1/2")
-                return 0.0
-            return self.sigma**2 * al**2 * s**e * (1.0 + 2.0 * H * np.log(s))
-        raise ValueError(p)
+    def theta(self, tau):
+        """theta(tau) = int_0^tau a(s) ds (half the total variance)."""
+        tau = np.asarray(tau, dtype=float)
+        v = sum(al ** 2 * (self.T ** (2 * h) - np.maximum(self.T - tau, 0) ** (2 * h))
+                for h, al in zip(self.H, self.alpha))
+        return 0.5 * self.sigma ** 2 * v
 
-    def beta(self) -> float:
-        b = [2 * H - 1 for H, al in zip(self.H, self.alpha) if H > 0.5 and al != 0]
+    def beta(self):
+        b = [2 * h - 1 for h, al in zip(self.H, self.alpha) if h > 0.5 and al != 0]
         return min(b) if b else 1.0
 
-    # -- closed-form European prices (Proposition 1) -------------------------
-    def total_variance(self, tau: float) -> float:
-        H = np.asarray(self.H)
-        al = np.asarray(self.alpha)
-        return self.sigma**2 * float(np.sum(al**2 * (self.T ** (2 * H) - max(self.T - tau, 0.0) ** (2 * H))))
-
-    def dvar_dparam(self, tau: float, p: str) -> float:
-        s = max(self.T - tau, 0.0)
-        if p == "sigma":
-            return 2.0 * self.total_variance(tau) / self.sigma
-        kind, i = p.rstrip("0123456789"), int(p.lstrip("Halph"))
-        H, al = self.H[i], self.alpha[i]
-        if kind == "alpha":
-            return 2.0 * self.sigma**2 * al * (self.T ** (2 * H) - s ** (2 * H))
-        sl = s ** (2 * H) * np.log(s) if s > 0 else 0.0
-        return self.sigma**2 * al**2 * 2.0 * (self.T ** (2 * H) * np.log(self.T) - sl)
-
-    def _d(self, S, tau):
-        v = self.total_variance(tau)
-        sv = np.sqrt(v)
-        d1 = (np.log(S / self.K) + (self.r - self.delta) * tau + 0.5 * v) / sv
-        return d1, d1 - sv, v, sv
-
+    # closed-form European prices (Proposition 2.1): Black-Scholes with total variance 2 theta
     def european(self, S, tau, kind="put"):
         S = np.asarray(S, dtype=float)
-        if tau <= 0:
-            return np.maximum(self.K - S, 0) if kind == "put" else np.maximum(S - self.K, 0)
-        d1, d2, v, sv = self._d(S, tau)
-        dfr, dfq = np.exp(-self.r * tau), np.exp(-self.delta * tau)
+        K, r, q = self.K, self.r, self.delta
+        if np.isscalar(tau) and tau == 0:
+            return np.maximum(K - S, 0) if kind == "put" else np.maximum(S - K, 0)
+        v = np.sqrt(2 * self.theta(tau))
+        d1 = (np.log(S / K) + (r - q) * tau + 0.5 * v ** 2) / v
+        d2 = d1 - v
         if kind == "put":
-            return self.K * dfr * norm.cdf(-d2) - S * dfq * norm.cdf(-d1)
-        return S * dfq * norm.cdf(d1) - self.K * dfr * norm.cdf(d2)
+            return K * np.exp(-r * tau) * norm.cdf(-d2) - S * np.exp(-q * tau) * norm.cdf(-d1)
+        return S * np.exp(-q * tau) * norm.cdf(d1) - K * np.exp(-r * tau) * norm.cdf(d2)
 
     def european_greeks(self, S, tau, kind="put"):
-        """Exact Delta, Gamma, Speed, Theta (calendar time) for the closed form."""
+        """Delta, Gamma, Speed, Theta (calendar, = -u_tau) of the closed-form price."""
         S = np.asarray(S, dtype=float)
-        d1, d2, v, sv = self._d(S, tau)
-        dfq = np.exp(-self.delta * tau)
-        n1 = norm.pdf(d1)
-        delta = dfq * (norm.cdf(d1) - (1.0 if kind == "put" else 0.0))
-        gamma = dfq * n1 / (S * sv)
-        speed = -gamma / S * (1.0 + d1 / sv)
+        K, r, q = self.K, self.r, self.delta
+        v = np.sqrt(2 * self.theta(tau))
+        d1 = (np.log(S / K) + (r - q) * tau + 0.5 * v ** 2) / v
+        d2 = d1 - v
+        nd1 = norm.pdf(d1)
+        if kind == "put":
+            delta = np.exp(-q * tau) * (norm.cdf(d1) - 1)
+        else:
+            delta = np.exp(-q * tau) * norm.cdf(d1)
+        gamma = np.exp(-q * tau) * nd1 / (S * v)
+        speed = -gamma / S * (1 + d1 / v)
+        # Theta via the PDE: u_tau = a S^2 Gamma + (r-q) S Delta - r u
         u = self.european(S, tau, kind)
         a = self.a(tau)
-        ux = S * delta
-        uxx = S**2 * gamma + S * delta
-        u_tau = a * (uxx - ux) + (self.r - self.delta) * ux - self.r * u
-        return {"Delta": delta, "Gamma": gamma, "Speed": speed, "Theta": -u_tau}
-
-    def european_param_sensitivity(self, S, tau, p, kind="put"):
-        """Exact d u / d p through the total variance (same for calls and puts)."""
-        S = np.asarray(S, dtype=float)
-        d1, d2, v, sv = self._d(S, tau)
-        dP_dv = S * np.exp(-self.delta * tau) * norm.pdf(d1) / (2.0 * sv)
-        return dP_dv * self.dvar_dparam(tau, p)
+        theta_cal = -(a * S ** 2 * gamma + (r - q) * S * delta - r * u)
+        return delta, gamma, speed, theta_cal
 
 
-EXAMPLE1 = GMFBM()
-EXAMPLE2 = GMFBM(K=100.0, r=0.10, sigma=0.50, H=(0.5, 0.59, 0.68, 0.77, 0.86),
-                 alpha=tuple([1 / np.sqrt(5)] * 5))
+def time_mesh(T, Nt, kind="uniform"):
+    s = np.linspace(0.0, 1.0, Nt + 1)
+    if kind == "uniform":
+        tau = T * s
+    elif kind == "graded":  # graded towards tau = T
+        tau = T * (1 - (1 - s) ** 2)
+    elif kind == "twosided":  # graded towards tau = 0 and tau = T
+        tau = T * s ** 2 * (3 - 2 * s)
+    else:
+        raise ValueError(kind)
+    tau[0], tau[-1] = 0.0, T
+    return tau
+
+
+def eval_points(K, n=401, lo=0.2, hi=2.5):
+    """Error-measurement set: ln(S/K) uniform in [ln lo, ln hi]."""
+    return K * np.exp(np.linspace(np.log(lo), np.log(hi), n))
+
+
+EXAMPLE1 = dict(H=(0.5, 0.59, 0.68, 0.77), alpha=(0.5,) * 4, sigma=0.35, r=0.08, K=25.0, T=1.0)
+EXAMPLE2 = dict(H=(0.5, 0.59, 0.68, 0.77, 0.86), alpha=(1 / np.sqrt(5),) * 5, sigma=0.5, r=0.10,
+                K=100.0, T=1.0)

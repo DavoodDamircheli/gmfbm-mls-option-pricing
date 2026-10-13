@@ -1,150 +1,104 @@
+"""Non-cardinal moving least squares (MLS) shape functions in 1D with exact derivatives.
+
+Shape functions  psi(x, x_j) = w_j(x) * gamma(x)^T p(x_j),  G(x) gamma(x) = p(x),
+G(x) = sum_j w_j(x) p(x_j) p(x_j)^T.  Derivatives follow from differentiating
+G gamma = p (recursion (3.4) of the paper); no numerical differentiation is used.
+At every evaluation point x0 the scaled, shifted basis p_l(x) = ((x - x0)/hloc)^l
+is used, so that G(x0) is well conditioned.
 """
-Non-cardinal moving least squares (MLS) shape functions in one dimension.
-
-This module implements the MLS construction of Section 3 of the paper exactly:
-
-    psi(x, x_j) = w_j(x) * p(x)^T G(x)^{-1} p(x_j),     G(x) = sum_j w_j(x) p(x_j) p(x_j)^T,
-
-with moving, compactly supported weights w_j(x) = w(|x - x_j| / delta) and a
-polynomial basis of degree m.  The shape functions are *not* cardinal,
-psi(x_i, x_j) != delta_ij, so the collocation mass matrix
-
-    (M_h)_{ij} = psi(x_i, x_j)
-
-is kept explicitly, together with the derivative matrices
-(D_{k,h})_{ij} = d^k/dx^k psi(x_i, x_j), k = 1,...,4.
-
-Derivatives are exact (no finite differences): with gamma(x) = G(x)^{-1} p(x),
-    G gamma^{(k)} = p^{(k)} - sum_{l<k} binom(k,l) G^{(k-l)} gamma^{(l)},
-    psi_j^{(k)}   = sum_{l<=k} binom(k,l) w_j^{(k-l)} gamma^{(l)} . p(x_j).
-At an evaluation point x0 the basis is the fixed polynomial
-p_l(x) = ((x - x0)/h)^l, which keeps G well conditioned.
-"""
-from __future__ import annotations
-
-from dataclasses import dataclass
 from math import comb, factorial
 
 import numpy as np
 import scipy.sparse as sp
 
-# ---------------------------------------------------------------------------
-# Weight functions.  Each is w(u) for |u| < 1 (zero otherwise), returned
-# together with its derivatives d^k w / du^k, k = 0..4.
-# ---------------------------------------------------------------------------
+# weight W(s) = (1 - s^2)^5 on |s| < 1 (C^4), as a polynomial in s
+_W = np.polynomial.Polynomial([1.0, 0.0, -1.0]) ** 5
+_WD = [_W.deriv(k) if k else _W for k in range(5)]
 
 
-def _poly_weight_derivs(coeffs: np.ndarray, u: np.ndarray, kmax: int) -> np.ndarray:
-    """Derivatives of an even polynomial weight written in powers of u."""
-    out = np.zeros((kmax + 1, u.size))
-    c = np.polynomial.Polynomial(coeffs)
-    inside = np.abs(u) < 1.0
+def weight_derivs(s, kmax):
+    """Return array (kmax+1, len(s)) of d^k W / ds^k at s (zero outside |s|<1)."""
+    s = np.asarray(s, dtype=float)
+    out = np.zeros((kmax + 1, s.size))
+    inside = np.abs(s) < 1.0
     for k in range(kmax + 1):
-        out[k, inside] = c.deriv(k)(u[inside]) if k > 0 else c(u[inside])
+        out[k, inside] = _WD[k](s[inside])
     return out
 
 
-# w(u) = (1 - u^2)^5 on |u| < 1.  It is C^4 across |u| = 1 and smooth at 0,
-# so the MLS shape functions have four continuous derivatives (needed for the
-# third and fourth asset-price Greeks).
-_WENDLAND_LIKE = np.polynomial.Polynomial([1.0, 0.0, -1.0]) ** 5
+class MLS1D:
+    """MLS approximation space on a 1D node set.
 
+    nodes  : increasing array of N nodes (x_1 = x_min, x_N = x_max)
+    degree : polynomial degree m
+    radius : support radius of each node (scalar or array of length N)
+    """
 
-def weight_derivs(u: np.ndarray, kmax: int = 4, kind: str = "poly5") -> np.ndarray:
-    if kind == "poly5":
-        return _poly_weight_derivs(_WENDLAND_LIKE.coef, u, kmax)
-    if kind == "cubic_spline":
-        # Table 1 cubic spline (C^2), written in r = |u|.
-        r = np.abs(u)
-        s = np.where(u >= 0.0, 1.0, -1.0)   # sign(0) := 1 (w is even)
-        out = np.zeros((kmax + 1, u.size))
-        a = r < 0.5
-        b = (r >= 0.5) & (r < 1.0)
-        pa = np.polynomial.Polynomial([2 / 3, 0.0, -4.0, 4.0])
-        pb = np.polynomial.Polynomial([4 / 3, -4.0, 4.0, -4 / 3])
-        for k in range(kmax + 1):
-            da = pa.deriv(k) if k else pa
-            db = pb.deriv(k) if k else pb
-            out[k, a] = da(r[a]) * s[a] ** k
-            out[k, b] = db(r[b]) * s[b] ** k
-        return out
-    raise ValueError(kind)
+    def __init__(self, nodes, degree=3, radius=None, radius_factor=3.5):
+        self.x = np.asarray(nodes, dtype=float)
+        self.N = self.x.size
+        self.m = degree
+        # local spacing at each node: mean gap over the (at most) two neighbours on each side;
+        # on a uniform grid this is exactly the grid spacing h
+        loc = np.empty(self.N)
+        for j in range(self.N):
+            lo, hi = max(0, j - 2), min(self.N - 1, j + 2)
+            loc[j] = (self.x[hi] - self.x[lo]) / (hi - lo)
+        self.hloc = loc
+        if radius is None:
+            radius = radius_factor * loc
+        self.rho = np.broadcast_to(np.asarray(radius, dtype=float), (self.N,)).copy()
+        self.rho_max = self.rho.max()
 
+    def _neighbors(self, x0):
+        lo = np.searchsorted(self.x, x0 - self.rho_max, side="left")
+        hi = np.searchsorted(self.x, x0 + self.rho_max, side="right")
+        idx = np.arange(lo, hi)
+        idx = idx[np.abs(x0 - self.x[idx]) < self.rho[idx]]
+        return idx
 
-# ---------------------------------------------------------------------------
-# Shape functions
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class MLSSpace:
-    """MLS approximation space on a 1-D point set."""
-
-    nodes: np.ndarray          # x_1 < ... < x_N
-    degree: int = 3            # polynomial degree m
-    support: float = 3.5       # delta = support * h (support radius)
-    weight: str = "poly5"
-
-    def __post_init__(self) -> None:
-        self.nodes = np.asarray(self.nodes, dtype=float)
-        self.h = float(np.max(np.diff(self.nodes)))      # fill-distance scale
-        self.delta = self.support * self.h
-
-    # -- core evaluation ---------------------------------------------------
-    def shape_derivatives(self, x0: float, kmax: int = 2):
-        """Return (indices J, array D[k, j]) with D[k] = d^k psi_J / dx^k at x0."""
-        m, h, d = self.degree, self.h, self.delta
-        u = (x0 - self.nodes) / d
-        J = np.nonzero(np.abs(u) < 1.0)[0]
-        if J.size < m + 1:
-            raise np.linalg.LinAlgError(
-                f"only {J.size} nodes in the support at x={x0:.4f}; need {m + 1}")
-        wd = weight_derivs(u[J], kmax, self.weight)
-        # d/dx = (1/delta) d/du
-        wd = wd / d ** np.arange(kmax + 1)[:, None]
-        z = (self.nodes[J] - x0) / h
-        P = np.vander(z, m + 1, increasing=True)           # rows p(x_j)^T
-        # derivatives of the fixed basis p_l(x) = ((x - x0)/h)^l at x = x0
+    def shape_derivs(self, x0, kmax):
+        """Return (idx, D) with D[k, :] = d^k/dx^k psi(x0, x_idx), k = 0..kmax."""
+        idx = self._neighbors(x0)
+        xj = self.x[idx]
+        hs = np.interp(x0, self.x, self.hloc)
+        m = self.m
+        P = ((xj - x0) / hs)[:, None] ** np.arange(m + 1)[None, :]  # (n, m+1): p(x_j)
+        s = (x0 - xj) / self.rho[idx]
+        Wk = weight_derivs(s, kmax) / self.rho[idx][None, :] ** np.arange(kmax + 1)[:, None]
+        Gk = [P.T @ (Wk[k][:, None] * P) for k in range(kmax + 1)]
+        # p^{(k)}(x0)
         pk = np.zeros((kmax + 1, m + 1))
         for k in range(kmax + 1):
             if k <= m:
-                pk[k, k] = factorial(k) / h ** k
-        Gk = [P.T @ (wd[k][:, None] * P) for k in range(kmax + 1)]
-        G = Gk[0]
+                pk[k, k] = factorial(k) / hs ** k
+        G0 = Gk[0]
         gam = []
         for k in range(kmax + 1):
             rhs = pk[k].copy()
             for l in range(k):
                 rhs -= comb(k, l) * (Gk[k - l] @ gam[l])
-            gam.append(np.linalg.solve(G, rhs))
-        D = np.zeros((kmax + 1, J.size))
+            gam.append(np.linalg.solve(G0, rhs))
+        D = np.zeros((kmax + 1, idx.size))
         for k in range(kmax + 1):
+            acc = np.zeros(idx.size)
             for l in range(k + 1):
-                D[k] += comb(k, l) * wd[k - l] * (P @ gam[l])
-        return J, D
+                acc += comb(k, l) * Wk[k - l] * (P @ gam[l])
+            D[k] = acc
+        return idx, D
 
-    def matrices(self, points: np.ndarray | None = None, kmax: int = 2):
-        """Sparse matrices E_k with (E_k)_{ij} = psi^{(k)}(points_i, x_j), k=0..kmax.
-
-        With points = nodes this returns [M_h, D_1h, D_2h, ...].
-        """
-        pts = self.nodes if points is None else np.asarray(points, dtype=float)
-        rows = [[] for _ in range(kmax + 1)]
-        cols = [[] for _ in range(kmax + 1)]
-        vals = [[] for _ in range(kmax + 1)]
-        for i, x0 in enumerate(pts):
-            J, D = self.shape_derivatives(x0, kmax)
+    def matrices(self, eval_points=None, kmax=2):
+        """Sparse matrices [M, D1, ..., Dkmax], rows = evaluation points (default: nodes)."""
+        xe = self.x if eval_points is None else np.asarray(eval_points, dtype=float)
+        rows, cols, vals = [], [], [[] for _ in range(kmax + 1)]
+        for i, x0 in enumerate(xe):
+            idx, D = self.shape_derivs(x0, kmax)
+            rows.append(np.full(idx.size, i))
+            cols.append(idx)
             for k in range(kmax + 1):
-                rows[k].append(np.full(J.size, i))
-                cols[k].append(J)
                 vals[k].append(D[k])
-        shape = (pts.size, self.nodes.size)
-        return [
-            sp.csr_matrix((np.concatenate(vals[k]), (np.concatenate(rows[k]), np.concatenate(cols[k]))), shape=shape)
-            for k in range(kmax + 1)
-        ]
-
-
-def uniform_space(nx: int, xmin: float = -6.0, xmax: float = 6.0, **kw) -> MLSSpace:
-    """N_x subintervals, N_x + 1 nodes (the convention of the paper)."""
-    return MLSSpace(np.linspace(xmin, xmax, nx + 1), **kw)
+        rows = np.concatenate(rows)
+        cols = np.concatenate(cols)
+        shape = (xe.size, self.N)
+        return [sp.csr_matrix((np.concatenate(vals[k]), (rows, cols)), shape=shape)
+                for k in range(kmax + 1)]
